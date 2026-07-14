@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Heavy data lives outside git (see HANDOFF.md "What's in this package"):
+# corpus + pools + run transcripts total ~1.8 GB. Rebuild the corpus with
+# `althist ingest` (needs ../low-compute-ml) or copy from the box/snapshot
+# zip; transcripts are the RLVR training data and belong in artifact storage.
+data/papers/
+data/papers_dupes/
+data/pools/
+data/runs/
+data/runs_pools/
+data/runs_quarantine/
+data/runs_pools_quarantine/

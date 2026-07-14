@@ -1,0 +1,26 @@
+{
+  "paper_id": "lecun-1989-backprop-zip",
+  "title": "Backpropagation Applied to Handwritten Zip Code Recognition",
+  "authors": ["Y. LeCun", "B. Boser", "J. S. Denker", "D. Henderson", "R. E. Howard", "W. Hubbard", "L. D. Jackel"],
+  "year": 1989,
+  "abstract": "The ability of learning networks to generalize can be greatly enhanced by providing constraints from the task domain. This paper demonstrates how such constraints can be integrated into a backpropagation network through the architecture of the network. This approach has been successfully applied to the recognition of handwritten zip code digits provided by the U.S. Postal Service.",
+  "sources": [
+    {
+      "source_id": "rumelhart-1986-backprop",
+      "title": "Learning representations by back-propagating errors",
+      "authors": ["D. E. Rumelhart", "G. E. Hinton", "R. J. Williams"],
+      "year": 1986,
+      "abstract": "We describe a new learning procedure, back-propagation, for networks of neurone-like units. The procedure repeatedly adjusts the weights of the connections in the network so as to minimize a measure of the difference between the actual output vector of the net and the desired output vector.",
+      "relevance": "Supplies the training procedure the paper applies under architectural constraints."
+    },
+    {
+      "source_id": "denker-1989-digits",
+      "title": "Neural Network Recognizer for Hand-Written Zip Code Digits",
+      "authors": ["J. S. Denker"],
+      "year": 1989,
+      "abstract": "This paper describes the construction of a system that recognizes hand-printed digits, using a combination of classical techniques and neural-net methods, applied to U.S. Postal Service zip codes.",
+      "relevance": "The hand-engineered-features baseline on the same task that the paper replaces with learned features.",
+      "full_text": "Include the plain-text full paper here when available; it enables the read_span and search_sources tools."
+    }
+  ]
+}
