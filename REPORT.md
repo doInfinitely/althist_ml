@@ -22,10 +22,12 @@ paper's Fig. 7 protocol.
    marginal reaches TVD 0.066 (opportunity) / 0.166 (paradigm) at zero
    extra generation cost. The collapse is a default-mode behavior, not a
    capability limit — the target distribution is reachable by prompting.
-3. **Operation-level style bias survives steering**: archetype clustering
-   still shows unify (41 vs 9) and design (29 vs 6) over-production against
-   the human profile, so label-level steering is necessary but not
-   sufficient for full human-likeness.
+3. **Operation-level style bias survives steering** (full corpus, 5,279
+   archetypes): unify 561 model vs 9 human (11.4% vs 2.8% of ideas),
+   integrate 232 vs 8, design 210 vs 6 — the paper's unify/integrate
+   over-production replicates at scale despite near-total label
+   compliance. Label-level steering is necessary but not sufficient for
+   full human-likeness; operation style is the natural next RLVR target.
 4. **Representation metrics reach human parity under tool grounding**:
    H 0.899 vs 0.907, mean source similarity 0.505 vs 0.509 — and the
    anti-gaming constraint (high H must co-occur with high mean similarity)

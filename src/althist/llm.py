@@ -69,7 +69,10 @@ class AnthropicProvider:
     def __init__(self, model: str = DEFAULT_ANTHROPIC_MODEL, max_tokens: int = DEFAULT_MAX_TOKENS):
         import anthropic
 
-        self.client = anthropic.Anthropic()
+        # Generous retry budget: org-level 429s (shared output-TPM pool with
+        # other boxes) can persist for minutes; the SDK honors Retry-After
+        # with exponential backoff, which beats crash-and-restart loops.
+        self.client = anthropic.Anthropic(max_retries=10)
         self.model = model
         self.max_tokens = max_tokens
 

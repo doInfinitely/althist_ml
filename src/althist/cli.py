@@ -606,15 +606,23 @@ def cmd_archetypes(args: argparse.Namespace) -> int:
                 cached[row["key"]] = row["archetype"]
 
     human, model = [], []
+    skipped = 0
     with open(path, "a") as f:
         for item in items:
             key = f"{item.paper_id}|{item.source}|{item.condition.key if item.condition else ''}"
             if key not in cached:
-                arch = rewrite_archetype(provider, item.idea)
+                try:
+                    arch = rewrite_archetype(provider, item.idea)
+                except Exception as exc:  # noqa: BLE001 - one refusal must not kill the batch
+                    print(f"  SKIP {key}: {type(exc).__name__}: {exc}", flush=True)
+                    skipped += 1
+                    continue
                 cached[key] = arch
                 f.write(json.dumps({"key": key, "archetype": arch}) + "\n")
                 f.flush()
             (human if item.source == "human" else model).append(cached[key])
+    if skipped:
+        print(f"({skipped} ideas skipped after per-item errors)")
 
     print(f"{'operation':<16} {'model':>6} {'human':>6} {'log-odds':>9}")
     for e in operation_enrichment(model, human):
