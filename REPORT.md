@@ -58,11 +58,12 @@ paper's Fig. 7 protocol.
    remove (cut arm: −0.125 on the steered condition, noise on blank; n=1
    per cell). The arm's payoff is at the RLVR stage, where open weights are
    required anyway and removal is what makes a re-derivation reward honest.
-9. **Harbor seed supply**: 46 fully-vetted seeds from the pilot alone;
-   projected several hundred to ~1,000 across the full run, pending the
-   closing annotation/scoring passes. Recall safety is the only hard gate
-   (79% attrition on famous papers); conditioned on recall-safe, 68% of
-   ideas pass all quality gates.
+9. **Harbor seed supply (final)**: **436 suitable seeds (8.8% of 4,945
+   scored episodes) across 137 distinct papers**; 276 after top-3-per-paper
+   dedup. Recall safety is the only hard gate: just 15% of all episodes are
+   recall-safe at 0.5 — notably below the long-tail optimism in early
+   projections; even less-cited pre-GPU papers are substantially memorized.
+   Conditioned on recall-safe, 59% pass all quality gates.
 
 ## 1. Corpus and integrity
 
@@ -120,14 +121,20 @@ UCB1 scores exactly 0 recall-safety (anchor requirement); 63/64 bandit
 conditions floor — steering changes the framing but the content converges
 on UCB1. `EXCESS_RECALL_SCALE = 0.15` retained.
 
-## 4. Scale-out (308 papers × 15 conditions)
+## 4. Scale-out (308 papers × 15 conditions) — COMPLETE
 
-4,620 episodes: **4,570 succeeded (98.9%)** across 10 parallel waves; 50
-failures (40-turn ceilings with the submit-retry signature, a few network
-errors and API overloads) in a retry sweep at `--max-turns 60` (in flight
-at report time; pilot/pool stragglers all succeeded on retry in 6–13
-turns). Closing passes (annotate → analyze → fwdext → score → archetypes)
-pending sweep completion.
+All 4,620 episodes succeeded (98.9% first-pass; two retry sweeps recovered
+the rest — no permanent failures, zero junk in the final audit). Combined
+with the pilot: **4,940 Opus episodes, all annotated (5,262 annotations
+incl. human ideas).**
+
+Full-corpus distributional results confirm and strengthen the pilot:
+pooled entropy 0.979 / 0.933 (human 0.941 / 0.878), TVD 0.262 / 0.365,
+and **human-marginal-weighted singles reach TVD 0.037 (opportunity) /
+0.154 (paradigm)** — the opportunity-axis match is at annotator-noise
+level. Forward-extension at full scale (2,013 episodes, 131
+descendant-bearing papers): 62.1% regurgitation / 2.0% forward extension /
+35.9% clean — the pilot pattern holds.
 
 Qualitative spot-checks: proposals are specific and mechanism-bearing (no
 generic A+B stitching). Notable modes: independent re-derivation with a
@@ -175,18 +182,21 @@ model produces the intermediates; give it the intermediates' outputs (a
 paper's sources) and it sometimes produces the descendant. The model
 slides along the citation timeline toward its densest training mass.
 
-## 7. Harbor seed supply
+## 7. Harbor seed supply (final)
 
-Gates: recall_safety ≥ 0.5, shape verifiability ≥ 0.8, specificity ≥ 2/3,
-anti-stitching ≥ 2/3, anti-boilerplate ≥ 2/3.
+Gates: recall_safety ≥ 0.5 (worst-route, descendant-tightened), shape
+verifiability ≥ 0.8, specificity ≥ 2/3, anti-stitching ≥ 2/3,
+anti-boilerplate ≥ 2/3. Over all 4,945 scored episodes:
 
-- Pilot (all signals): **46/320 suitable (14%)**; recall is the only hard
-  gate (21% pass on famous papers); quality-given-recall-safe = 68%.
-- Famous-paper scale-out portion (recall side): 11% recall-safe.
-- Long-tail projection (~220 less-cited papers): recall-safe rate
-  unmeasured until closing passes; at 25–50%, total supply lands at
-  **several hundred to ~1,000 suitable seeds** (dedup to top 1–3 per paper
-  for task creation).
+- **436 suitable seeds (8.8%) across 137 distinct papers; 276 after
+  top-3-per-paper dedup.** Full ranking: `data/analysis/task_seeds.jsonl`.
+- Recall safety is the only hard gate: 15% of episodes corpus-wide are
+  recall-safe at 0.5 — the long tail is cleaner than the famous papers
+  (11%) but far below early 25–50% hopes. Pre-GPU ML is simply
+  well-memorized, which quantitatively motivates both the excess-based
+  penalty design and the abliteration arm.
+- Conditioned on recall-safe, 59% pass all quality gates: quality is not
+  the bottleneck; contamination is.
 
 ## 8. Knowledge-abliteration arm
 
