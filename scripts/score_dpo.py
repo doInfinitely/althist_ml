@@ -95,6 +95,9 @@ def main():
     ap.add_argument("--scored-out", help="also dump per-sample rewards here")
     ap.add_argument("--min-gap", type=float, default=0.05,
                     help="min reward gap to keep a pair")
+    ap.add_argument("--max-pairs-per-paper", type=int, default=1,
+                    help="graded pairs per paper (rank i vs n-1-i)")
+    ap.add_argument("--papers-file", help="json list: restrict pairing to these papers")
     ap.add_argument("--workers", type=int, default=8,
                     help="concurrent annotation requests")
     args = ap.parse_args()
@@ -263,25 +266,32 @@ def main():
             r += W["qual"] * P["qual"][i] + W["dist"] * P["dist"][i]
         s["reward"] = r
 
-    # ---- pair best vs worst per paper ----
+    # ---- pair per paper (graded: rank i vs rank n-1-i) ----
+    restrict = None
+    if args.papers_file:
+        restrict = set(json.load(open(args.papers_file)))
     by_paper = defaultdict(list)
     for s in scored:
-        by_paper[s["paper_id"]].append(s)
+        if restrict is None or s["paper_id"] in restrict:
+            by_paper[s["paper_id"]].append(s)
+    fmt = lambda s: json.dumps({"motivation": s["motivation"], "method": s["method"]})
     pairs = []
     for pid, ss in by_paper.items():
         if len(ss) < 2:
             continue
         ss.sort(key=lambda s: s["reward"])
-        lo, hi = ss[0], ss[-1]
-        if hi["reward"] - lo["reward"] < args.min_gap:
-            continue
         paper = corpus.load(pid)
         prompt = [{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": build_user(paper)}]
-        fmt = lambda s: json.dumps({"motivation": s["motivation"], "method": s["method"]})
-        pairs.append({"paper_id": pid, "prompt": prompt,
-                      "chosen": fmt(hi), "rejected": fmt(lo),
-                      "reward_gap": hi["reward"] - lo["reward"]})
+        n = len(ss)
+        for i in range(min(args.max_pairs_per_paper, n // 2)):
+            hi, lo = ss[n - 1 - i], ss[i]   # i-th best vs i-th worst
+            gap = hi["reward"] - lo["reward"]
+            if gap < args.min_gap:
+                break                        # remaining inner pairs are smaller
+            pairs.append({"paper_id": pid, "prompt": prompt,
+                          "chosen": fmt(hi), "rejected": fmt(lo),
+                          "reward_gap": gap})
 
     if args.scored_out:
         with open(args.scored_out, "w") as f:

@@ -73,6 +73,41 @@ proof-of-loop, not a finished model.
 The entire DPO experiment (sample + train + merge + eval serving) added ~$2.30;
 the whole abliteration+RLVR arm is at ~$72 of the $500 budget.
 
+## Scale-up (2026-07-25) — more CLEAN pairs beat more pairs
+
+Scaled the preference set and retrained. Two lessons:
+
+1. **Naive multi-pairing hurt.** Re-pairing the existing 8 samples/paper into
+   graded pairs (rank i vs n-1-i) at `min-gap 0.05` gave 778 pairs — but many are
+   near-ties (small reward gap). Training on them was *worse* than v1 (accuracy
+   below 0.5, negative margins early): near-tie pairs dilute the DPO signal.
+2. **Clean multi-pairing helped.** Raising the gap floor to `min-gap 0.12`
+   (mean gap 0.226, ≈ v1's quality) gave **497 clean pairs**. Trained 3 epochs:
+   margins climbed to **+0.21** (v1 ended +0.07), loss 0.60.
+   (Higher-K sampling — more diverse samples — was the other lever, but the
+   sampler stalls on server scale-down; left for a hardened sampler.)
+
+**Held-out eval (30 unseen papers), base vs v1 (283) vs v2 (497 clean):**
+
+| component | base | v1 | v2 |
+|---|---|---|---|
+| quality | 0.302 | 0.310 | **0.315** |
+| source-sim | 0.268 | 0.273 | **0.274** |
+| dist (human-like) | 0.023 | 0.023 | **0.026** |
+| copy (contamination) | 0.0008 | 0.0008 | 0.0009 |
+| joint composite | 0.335 | 0.445 | **0.565** |
+| paired wins vs base | — | 29/30 | **30/30** |
+
+**v2 beats both base and v1**: the composite lift roughly doubled (+0.11 → +0.23),
+raw components are monotonically better base→v1→v2, it wins all 30 held-out
+papers, and contamination stayed at zero. So scaling the preference set **works —
+provided pair quality is held high** (a gap floor); adding near-tie pairs
+backfires. Marginal cost of the whole scale-up: ~$9 (arm total ~$81 of $500).
+
+Adapter/merged on the volume: `dpo/qwen14b-dpo-v2`, `dpo/qwen14b-dpo-v2-merged`.
+Train set: `data/analysis/dpo_train_scaled.jsonl` (497). Per-sample held-out
+scores: `dpo_v2trained_scored.jsonl`.
+
 ## Caveats / next
 
 - 283 pairs, single-turn (not agentic), 14B, one seed. Reward is a soft proxy.

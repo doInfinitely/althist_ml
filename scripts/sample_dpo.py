@@ -95,6 +95,8 @@ def main():
     ap.add_argument("--max-tokens", type=int, default=900)
     ap.add_argument("--limit", type=int, help="cap papers (debug)")
     ap.add_argument("--papers", help="comma-separated paper ids to sample (default: all)")
+    ap.add_argument("--id-offset", type=int, default=0,
+                    help="sample_id base (use 8 for a second K=8 wave -> ids 8..15)")
     args = ap.parse_args()
 
     model, base_url = args.provider.split("@", 1)
@@ -134,7 +136,8 @@ def main():
             continue
         with open(dst, "w") as f:
             for i, idea in enumerate(ideas):
-                f.write(json.dumps({"paper_id": pid, "sample_id": i, **idea}) + "\n")
+                f.write(json.dumps({"paper_id": pid,
+                                    "sample_id": args.id_offset + i, **idea}) + "\n")
         done += 1
         ok += len(ideas)
         print(f"  {pid}: {len(ideas)}/{args.k}", flush=True)

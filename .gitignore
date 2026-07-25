@@ -25,3 +25,5 @@ modal/__pycache__/
 data/analysis/.reward_audit_emb.json
 data/dpo_samples/
 data/dpo_samples_trained/
+data/dpo_samples_v2trained/
+data/dpo_samples_v2/
