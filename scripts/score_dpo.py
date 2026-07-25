@@ -92,6 +92,7 @@ def main():
     ap.add_argument("--emb-cache", default="data/analysis/.reward_audit_emb.json")
     ap.add_argument("--ann-cache", default="data/dpo_samples/.annotations.jsonl")
     ap.add_argument("--out", default="data/analysis/dpo_pairs.jsonl")
+    ap.add_argument("--scored-out", help="also dump per-sample rewards here")
     ap.add_argument("--min-gap", type=float, default=0.05,
                     help="min reward gap to keep a pair")
     ap.add_argument("--workers", type=int, default=8,
@@ -100,9 +101,12 @@ def main():
 
     corpus = Corpus(args.papers_dir)
     samples = []
-    for f in sorted(Path(args.samples_dir).glob("*.jsonl")):
-        for line in open(f):
-            samples.append(json.loads(line))
+    for sdir in args.samples_dir.split(","):
+        for f in sorted(Path(sdir).glob("*.jsonl")):
+            if f.name.startswith("."):      # skip the .annotations cache
+                continue
+            for line in open(f):
+                samples.append(json.loads(line))
     print(f"{len(samples)} sampled ideas across "
           f"{len({s['paper_id'] for s in samples})} papers", file=sys.stderr)
 
@@ -278,6 +282,16 @@ def main():
         pairs.append({"paper_id": pid, "prompt": prompt,
                       "chosen": fmt(hi), "rejected": fmt(lo),
                       "reward_gap": hi["reward"] - lo["reward"]})
+
+    if args.scored_out:
+        with open(args.scored_out, "w") as f:
+            for s in scored:
+                f.write(json.dumps({
+                    "paper_id": s["paper_id"], "sample_id": s["sample_id"],
+                    "reward": s["reward"], "H": s["H"], "sim": s["sim"],
+                    "copy": s["copy"], "qual": s.get("qual"), "dist": s.get("dist"),
+                }) + "\n")
+        print(f"per-sample rewards -> {args.scored_out}", file=sys.stderr)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w") as f:

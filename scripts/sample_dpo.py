@@ -94,6 +94,7 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.9)
     ap.add_argument("--max-tokens", type=int, default=900)
     ap.add_argument("--limit", type=int, help="cap papers (debug)")
+    ap.add_argument("--papers", help="comma-separated paper ids to sample (default: all)")
     args = ap.parse_args()
 
     model, base_url = args.provider.split("@", 1)
@@ -103,6 +104,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     pids = [p for p in corpus.paper_ids()]
+    if args.papers:
+        wanted = set(args.papers.split(","))
+        pids = [p for p in pids if p in wanted]
     if args.limit:
         pids = pids[: args.limit]
 
