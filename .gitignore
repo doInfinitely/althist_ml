@@ -14,3 +14,11 @@ data/runs/
 data/runs_pools/
 data/runs_quarantine/
 data/runs_pools_quarantine/
+
+.env
+.vllm_key
+modal/__pycache__/
+.DS_Store
+**/.DS_Store
+*.swp
+.*.swp

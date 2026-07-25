@@ -171,13 +171,18 @@ class OpenAICompatProvider:
         self,
         model: str,
         base_url: str = "http://localhost:8000/v1",
-        api_key: str = "EMPTY",
+        api_key: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.6,
         top_p: float = 0.95,
     ):
+        import os
+
         from openai import OpenAI
 
+        # Key from arg, else OPENAI_API_KEY env (e.g. the vLLM server key),
+        # else "EMPTY" for unauthenticated local servers.
+        api_key = api_key or os.environ.get("OPENAI_API_KEY") or "EMPTY"
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.model = model
         self.max_tokens = max_tokens

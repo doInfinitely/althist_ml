@@ -122,32 +122,41 @@ def cmd_ideate(args: argparse.Namespace) -> int:
             return 2
     print(f"{len(paper_ids)} papers x {len(conditions)} conditions", flush=True)
 
-    # Resumability for long runs: skip (paper, condition, model) episodes that
-    # already have a successful transcript on disk. --redo forces a rerun.
-    done: set[tuple[str, str, str]] = set()
+    replicates = max(1, args.replicates)
+
+    # Resumability, replicate-aware: count successful transcripts per
+    # (paper, condition, model) and top up to `replicates`. --redo ignores
+    # existing transcripts and generates a full `replicates` fresh.
+    from collections import Counter
+
+    done: Counter[tuple[str, str, str]] = Counter()
     if not args.redo:
         from .ideation import load_run_results
 
         for r in load_run_results(runs_dir):
             if r.idea is not None:
-                done.add((r.paper_id, r.condition.key, r.model))
+                done[(r.paper_id, r.condition.key, r.model)] += 1
 
     failures = 0
     for pid in paper_ids:
         paper = corpus.load(pid)
         for condition in conditions:
-            if (pid, condition.key, provider.model) in done:
-                print(f"  {pid} [{condition.key}] skipped (already done)", flush=True)
+            have = done[(pid, condition.key, provider.model)]
+            need = replicates - have
+            if need <= 0:
+                print(f"  {pid} [{condition.key}] skipped ({have}/{replicates} done)", flush=True)
                 continue
-            result = run_ideation(paper, condition, provider, runs_dir=runs_dir,
-                                  max_turns=args.max_turns)
-            status = "ok" if result.idea else f"FAILED: {result.error}"
-            print(
-                f"  {pid} [{condition.key}] turns={result.n_turns} "
-                f"tools={result.n_tool_calls} {status}",
-                flush=True,
-            )
-            failures += result.idea is None
+            for rep in range(need):
+                result = run_ideation(paper, condition, provider, runs_dir=runs_dir,
+                                      max_turns=args.max_turns)
+                tag = f" rep {have + rep + 1}/{replicates}" if replicates > 1 else ""
+                status = "ok" if result.idea else f"FAILED: {result.error}"
+                print(
+                    f"  {pid} [{condition.key}]{tag} turns={result.n_turns} "
+                    f"tools={result.n_tool_calls} {status}",
+                    flush=True,
+                )
+                failures += result.idea is None
     return 1 if failures else 0
 
 
@@ -661,6 +670,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="safety ceiling on turns per episode (default: %(default)s)")
     p.add_argument("--pools", action="store_true",
                    help=f"run over remix pools ({POOLS_DIR} -> {POOL_RUNS_DIR})")
+    p.add_argument("--replicates", type=int, default=1,
+                   help="episodes per (paper,condition,model); resume tops up to this "
+                        "(use with a sampling provider for n>1). Default 1.")
 
     p = sub.add_parser("annotate", help="annotate human and generated ideas")
     p.add_argument("--provider", default="anthropic")

@@ -101,6 +101,7 @@ class MockProvider:
         self._turn = 0
 
     def start_conversation(self, system: str, user: str) -> dict:
+        self._turn = 0  # reset per episode (real providers are stateless per run)
         return {"system": system, "messages": [{"role": "user", "content": user}]}
 
     def step(self, state: dict, tools: list[dict]) -> StepResult:

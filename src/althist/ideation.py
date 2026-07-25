@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,7 +65,9 @@ def run_ideation(
     max_turns: int = MAX_TURNS,
 ) -> RunResult:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_id = f"{paper.paper_id}__{condition.key}__{_slug(provider.model)}__{stamp}"
+    # short random suffix so replicates in the same second don't collide
+    uniq = uuid.uuid4().hex[:6]
+    run_id = f"{paper.paper_id}__{condition.key}__{_slug(provider.model)}__{stamp}_{uniq}"
     transcript_path = Path(runs_dir) / paper.paper_id / f"{run_id}.jsonl"
     writer = TranscriptWriter(transcript_path)
 

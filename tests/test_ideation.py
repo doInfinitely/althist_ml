@@ -110,7 +110,7 @@ def test_ideate_cli_skips_completed(paper, tmp_path, monkeypatch, capsys):
 
     args = type("A", (), {"provider": "mock", "papers": "p1", "limit": None,
                           "pairs": False, "conditions": "blank__blank", "redo": False,
-                          "max_turns": 40, "pools": False})()
+                          "max_turns": 40, "pools": False, "replicates": 1})()
     assert cli.cmd_ideate(args) == 0
     # second run with a fresh provider must skip, not re-invoke the model
     called = {"n": 0}
@@ -121,4 +121,42 @@ def test_ideate_cli_skips_completed(paper, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(llm, "make_provider", lambda spec: Counting())
     assert cli.cmd_ideate(args) == 0
     assert called["n"] == 0
-    assert "skipped (already done)" in capsys.readouterr().out
+    assert "skipped (1/1 done)" in capsys.readouterr().out
+
+
+def test_ideate_replicates_top_up(paper, tmp_path, monkeypatch, capsys):
+    import althist.cli as cli
+    import althist.llm as llm
+    from conftest import MockProvider
+
+    monkeypatch.setattr(cli, "RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(cli, "PAPERS_DIR", str(tmp_path / "papers"))
+    (tmp_path / "papers").mkdir()
+    (tmp_path / "papers" / "p1.json").write_text(paper.model_dump_json())
+
+    calls = {"n": 0}
+    class Counting(MockProvider):
+        def __init__(self):
+            super().__init__()
+        def step(self, *a, **k):
+            return super().step(*a, **k)
+    def make(spec):
+        calls["n"] += 1
+        return MockProvider()
+    monkeypatch.setattr(llm, "make_provider", make)
+
+    base = {"provider": "mock", "papers": "p1", "limit": None, "pairs": False,
+            "conditions": "blank__blank", "redo": False, "max_turns": 40,
+            "pools": False}
+    # first: generate 3 replicates
+    cli.cmd_ideate(type("A", (), {**base, "replicates": 3})())
+    n1 = len(list((tmp_path / "runs").glob("*/*.jsonl")))
+    assert n1 == 3
+    # second: ask for 5 -> tops up by 2 (not 5)
+    cli.cmd_ideate(type("A", (), {**base, "replicates": 5})())
+    n2 = len(list((tmp_path / "runs").glob("*/*.jsonl")))
+    assert n2 == 5
+    # third: ask for 5 again -> no new episodes
+    cli.cmd_ideate(type("A", (), {**base, "replicates": 5})())
+    n3 = len(list((tmp_path / "runs").glob("*/*.jsonl")))
+    assert n3 == 5
