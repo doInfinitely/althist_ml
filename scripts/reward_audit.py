@@ -50,6 +50,25 @@ def _idea_text(idea):
     return f"{idea.motivation}\n{idea.method}"
 
 
+import re  # noqa: E402
+
+
+def _ngrams(text, n=4):
+    toks = re.findall(r"[a-z0-9]+", text.lower())
+    return {tuple(toks[i:i + n]) for i in range(len(toks) - n + 1)}
+
+
+def ngram_copy(idea_text, gt_text, n=4):
+    """Containment: fraction of the idea's n-grams that also appear in the GT
+    paper. High = verbatim reproduction of a paper the model never saw =
+    pretraining recall. Orthogonal to topical specificity (a specific idea
+    shares topic words, not necessarily 4-grams)."""
+    ig = _ngrams(idea_text, n)
+    if not ig or not gt_text:
+        return None
+    return len(ig & _ngrams(gt_text, n)) / len(ig)
+
+
 def _pearson(xs, ys):
     pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
     if len(pairs) < 3:
@@ -174,6 +193,8 @@ def main():
             "R_sim": sc.mean_similarity,
             "R_recall": -(sc.contamination_penalty or 0.0),
             "excess": sc.excess_gt_similarity,
+            # independent recall signal: verbatim overlap with the held-out GT
+            "copy": ngram_copy(_idea_text(r.idea), paper_texts[r.paper_id][1]),
             # quality diagnostics (annotator; 0-3 scales)
             "specificity": diag.bottleneck_specificity if diag else None,
             "boilerplate": diag.boilerplate_score if diag else None,

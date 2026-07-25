@@ -6,9 +6,12 @@ This module scores each generated idea against the skill's load-bearing
 criteria so we can rank and route the strongest ones:
 
 - **recall safety** (the skill's Step-2 gate): a seed whose solution a frontier
-  model can *recall* saturates and is worthless. Our contamination signal —
-  similarity to the historical paper in excess of mean source similarity — is
-  exactly this: high excess = the idea regurgitates the known result = unsafe.
+  model can *recall* saturates and is worthless. The contamination signal is a
+  verbatim n-gram overlap with the held-out paper (``metrics.contamination``):
+  the model never saw that paper, so reproducing its phrasing is pretraining
+  recall. This replaced the embedding excess-GT signal, which the offline reward
+  audit (REWARD_AUDIT.md) showed conflates re-derivation with recall and
+  penalises the most specific ideas (excess vs specificity r=+0.14).
 - **source relevance**: the idea should be grounded in its prior-work set
   (mean source similarity), not off-topic.
 - **specificity / not-stitching / not-boilerplate**: from the annotator's
@@ -27,6 +30,8 @@ out of the weighted composite, which renormalizes over what's present.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+from .metrics.contamination import COPY_RECALL_SCALE
 
 # althist method paradigm -> expert-ideate task shape (skill Step 3).
 PARADIGM_TO_SHAPE: dict[str, str] = {
@@ -64,7 +69,9 @@ WEIGHTS: dict[str, float] = {
     "source_relevance": 0.05,
 }
 
-# excess GT similarity at/above this reads as full-on regurgitation (recall_safety=0).
+# Excess-GT scale, retained only for the excess-based forward-extension
+# diagnostic (fwdext.py). The recall_safety gate itself now uses verbatim copy
+# (COPY_RECALL_SCALE) — see REWARD_AUDIT.md for why excess was retired here.
 EXCESS_RECALL_SCALE = 0.15
 
 
@@ -88,19 +95,18 @@ class TaskSeedScore:
 
 
 def _recall_safety(
-    excess_gt_similarity: float | None,
-    max_descendant_excess: float | None = None,
+    copy_score: float | None,
+    max_descendant_copy: float | None = None,
 ) -> float | None:
-    """Recall safety from the worst of two recall routes: reproducing the
-    historical paper itself, or reproducing a known *descendant* of it
-    (forward extension — memorized future work that raw excess-GT misses).
-    The descendant term only exists for corpus-internally-cited papers, so
-    it tightens the gate where available and is neutral elsewhere."""
-    if excess_gt_similarity is None and max_descendant_excess is None:
+    """Recall safety from the worst of two recall routes, measured by verbatim
+    n-gram overlap: reproducing the held-out paper itself, or reproducing a
+    known *descendant* of it (forward extension — memorized future work). The
+    descendant term only exists for corpus-internally-cited papers, so it
+    tightens the gate where available and is neutral elsewhere."""
+    if copy_score is None and max_descendant_copy is None:
         return None
-    worst = max(x for x in (excess_gt_similarity, max_descendant_excess)
-                if x is not None)
-    return _clamp(1.0 - max(0.0, worst) / EXCESS_RECALL_SCALE)
+    worst = max(x for x in (copy_score, max_descendant_copy) if x is not None)
+    return _clamp(1.0 - max(0.0, worst) / COPY_RECALL_SCALE)
 
 
 def score_idea(
@@ -109,8 +115,8 @@ def score_idea(
     condition_key: str,
     paradigm: str | None,
     *,
-    excess_gt_similarity: float | None = None,
-    max_descendant_excess: float | None = None,
+    copy_score: float | None = None,
+    max_descendant_copy: float | None = None,
     mean_source_similarity: float | None = None,
     bottleneck_specificity: int | None = None,
     surface_stitching_score: int | None = None,
@@ -123,7 +129,7 @@ def score_idea(
     """
     shape = PARADIGM_TO_SHAPE.get(paradigm) if paradigm else None
     candidates: dict[str, float | None] = {
-        "recall_safety": _recall_safety(excess_gt_similarity, max_descendant_excess),
+        "recall_safety": _recall_safety(copy_score, max_descendant_copy),
         "shape_verifiability": SHAPE_VERIFIABILITY.get(shape) if shape else None,
         "specificity": None if bottleneck_specificity is None else bottleneck_specificity / 3.0,
         "anti_stitching": None if surface_stitching_score is None else 1.0 - surface_stitching_score / 3.0,

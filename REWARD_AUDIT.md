@@ -109,6 +109,54 @@ a copy-detector or a quality-conditional penalty, validated on this same 4,924-
 episode set — is a prerequisite to any RLVR run and simultaneously improves the
 Harbor gate. That is where the next effort should go, ahead of rollouts.
 
+## Prototype (2026-07-25) — quality-conditional penalty FAILS an independent test; use a copy detector
+
+`scripts/qc_penalty.py`. Hypothesis: gate the excess penalty by low quality —
+`P_qc = max(0,excess-m)·(1-q)^2`, `q` = mean(specificity, 1-boilerplate,
+1-stitching). To avoid circularity (P_qc contains q), validate every candidate
+against an **independent recall signal not used to build it**: 4-gram containment
+between the idea and the held-out GT paper (`copy`) — the model never saw that
+paper, so reproducing its phrasing is pretraining recall, orthogonal to
+specificity.
+
+**First, how much real recall exists?** Almost none. `copy` over 4,924 episodes:
+mean 0.0013, median 0, p99 0.015, **max 0.061**; only **0.4%** exceed 0.02. An
+independent method (n-grams, no embeddings) confirms the abliteration finding:
+the models **re-derive, they do not copy** the held-out papers. So the honest
+contamination term should be near-*inactive*, not fire on 96.7% like `−excess`.
+
+**Validation against `copy` (the real recall signal):**
+
+| penalty | fires on | corr(·, quality) | corr(·, copy) | precision@49¹ |
+|---|---|---|---|---|
+| `−excess` (current) | 96.7% | +0.155 (punishes good) | +0.269 | 16% |
+| quality-conditional soft | 94.2% | −0.730 *(circular)* | **+0.068** | **2%** |
+| quality-gated hard (q<0.5) | 0.6% | −0.224 | +0.020 | 2% |
+| **verbatim-copy detector** | 0.4% | +0.051 (neutral) | — | 100% |
+
+¹ of each penalty's 49 most-penalised, how many are the actual top-1% copy episodes.
+
+**The quality-conditional penalty does not detect recall.** It inverts the
+quality correlation (−0.73) — but that's circular (q is in its formula), and
+against the independent copy signal it scores corr +0.07 / precision 2%. It
+penalises *vagueness*, not *recall*, and low-quality ≠ recall. `excess` is also a
+weak detector (16% precision). Verbatim copy is **quality-neutral** (corr +0.05
+with quality) — which is precisely why every quality-based penalty misses it.
+
+**Conclusion — replace excess with a direct copy detector, don't quality-gate it.**
+The right contamination term is the verbatim/paraphrase-copy signal itself:
+near-zero for the whole corpus, firing only on the rare (~0.4%) episodes that
+actually reproduce the held-out paper. It needs no quality gating (copying is
+quality-neutral). Pair it with the abliteration evidence — high-excess ideas
+survive fact removal — to cover paraphrased recall that 4-grams miss. Net: the
+contamination penalty should be *rarely active*, and `−excess` / recall_safety
+should be retired as the contamination signal in both the RLVR reward and the
+Harbor gate.
+
+Residual value of `q`: as a **quality** reward term (specificity↑, boilerplate↓),
+not as a contamination proxy — a distinct axis the composite already covers via
+the annotator diagnostics.
+
 ## Caveats
 
 - Quality diagnostics are from the automated annotator, not human. They are the

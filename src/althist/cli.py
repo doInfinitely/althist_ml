@@ -291,21 +291,27 @@ def cmd_score(args: argparse.Namespace) -> int:
         ck = a.condition.key if a.condition else "blank__blank"
         ann_by_key[(a.paper_id, a.source, ck)] = a
 
-    # embedding signals (recall safety, source relevance) — optional
+    # embedding signal (source relevance = mean source similarity) — optional
     repr_by_key: dict[tuple, tuple[float | None, float]] = {}
     if args.embeddings:
         repr_by_key = _representation_signals(corpus, runs, args.embeddings)
 
-    # forward-extension signal (descendant excess) — present if `althist
-    # fwdext` has been run; tightens recall safety on descendant-bearing papers
-    fwd_by_key: dict[tuple, float] = {}
-    fwd_path = Path(FWDEXT_PATH)
-    if fwd_path.exists():
-        with open(fwd_path) as f:
-            for line in f:
-                row = json.loads(line)
-                fwd_by_key[(row["paper_id"], row["model"], row["condition_key"])] = \
-                    row["max_excess_to_descendant"]
+    # recall-safety signal: verbatim n-gram overlap with the held-out paper and
+    # its descendants (REWARD_AUDIT.md — replaces the excess-GT gate). Text-only,
+    # no embeddings. Descendants come from the citation graph (forward extension:
+    # memorised future work that copies a paper's successor rather than itself).
+    from .metrics.contamination import ngram_copy
+    from .remix import build_citation_graph
+
+    papers_all = {pid: corpus.load(pid) for pid in corpus.paper_ids()}
+    graph = build_citation_graph(papers_all)
+    descendants: dict[str, set[str]] = {}
+    for episode, ancestors in graph.items():
+        for anc in ancestors:
+            descendants.setdefault(anc, set()).add(episode)
+
+    def _idea_text(idea):
+        return f"{idea.motivation}\n{idea.method}"
 
     scores = []
     for r in runs:
@@ -317,12 +323,21 @@ def cmd_score(args: argparse.Namespace) -> int:
         if paradigm is None and ann is not None:
             paradigm = ann.annotation.method_paradigm.primary
         diag = ann.annotation.diagnostics if ann else None
-        excess, mean_sim = repr_by_key.get((r.paper_id, r.model, ck), (None, None))
+        _, mean_sim = repr_by_key.get((r.paper_id, r.model, ck), (None, None))
+        idea_text = _idea_text(r.idea)
+        gt = papers_all[r.paper_id].idea if r.paper_id in papers_all else None
+        copy_score = ngram_copy(idea_text, _idea_text(gt)) if gt else None
+        desc_copies = [
+            ngram_copy(idea_text, _idea_text(papers_all[d].idea))
+            for d in descendants.get(r.paper_id, ())
+            if papers_all[d].idea is not None
+        ]
+        max_desc_copy = max(desc_copies) if desc_copies else None
         scores.append(
             score_idea(
                 r.paper_id, r.model, ck, paradigm,
-                excess_gt_similarity=excess,
-                max_descendant_excess=fwd_by_key.get((r.paper_id, r.model, ck)),
+                copy_score=copy_score,
+                max_descendant_copy=max_desc_copy,
                 mean_source_similarity=mean_sim,
                 bottleneck_specificity=diag.bottleneck_specificity if diag else None,
                 surface_stitching_score=diag.surface_stitching_score if diag else None,

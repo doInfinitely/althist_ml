@@ -17,11 +17,11 @@ def test_every_paradigm_maps_to_a_known_shape():
 
 
 def test_recall_safety_penalizes_regurgitation():
-    # high excess similarity to the ground-truth paper => low recall safety
+    # high verbatim overlap with the held-out paper => low recall safety
     regurgitated = score_idea("p", "m", "blank__blank", "empirical_mapping",
-                              excess_gt_similarity=0.2)
+                              copy_score=0.06)
     novel = score_idea("p", "m", "blank__blank", "empirical_mapping",
-                       excess_gt_similarity=0.0)
+                       copy_score=0.0)
     assert regurgitated.components["recall_safety"] == pytest.approx(0.0)
     assert novel.components["recall_safety"] == pytest.approx(1.0)
     assert novel.composite > regurgitated.composite
@@ -55,9 +55,9 @@ def test_annotation_signals_feed_specificity():
 
 
 def test_rank_orders_by_composite():
-    a = score_idea("p", "m", "c1", "formal_derivation", excess_gt_similarity=0.0,
+    a = score_idea("p", "m", "c1", "formal_derivation", copy_score=0.0,
                    bottleneck_specificity=3)
-    b = score_idea("p", "m", "c2", "synthesis_unification", excess_gt_similarity=0.2,
+    b = score_idea("p", "m", "c2", "synthesis_unification", copy_score=0.06,
                    bottleneck_specificity=0)
     ranked = rank_seeds([b, a])
     assert [r.condition_key for r in ranked] == ["c1", "c2"]
@@ -71,18 +71,18 @@ def test_paradigm_none_yields_no_shape():
 
 
 def test_recall_safety_worst_of_target_and_descendant():
-    # low excess to the target but high excess to a descendant (forward
-    # extension) must gate just as hard as direct regurgitation
+    # low copy to the target but high copy to a descendant (forward extension)
+    # must gate just as hard as direct verbatim reproduction
     fwd = score_idea("p", "m", "blank__blank", "empirical_mapping",
-                     excess_gt_similarity=0.02, max_descendant_excess=0.30)
+                     copy_score=0.005, max_descendant_copy=0.06)
     direct = score_idea("p", "m", "blank__blank", "empirical_mapping",
-                        excess_gt_similarity=0.30)
+                        copy_score=0.06)
     clean = score_idea("p", "m", "blank__blank", "empirical_mapping",
-                       excess_gt_similarity=0.02, max_descendant_excess=0.01)
+                       copy_score=0.005, max_descendant_copy=0.002)
     assert fwd.components["recall_safety"] == 0.0
     assert fwd.components["recall_safety"] == direct.components["recall_safety"]
     assert clean.components["recall_safety"] > 0.8
-    # descendant term alone (no GT excess) still produces the signal
+    # descendant term alone (no target copy) still produces the signal
     only_desc = score_idea("p", "m", "blank__blank", "empirical_mapping",
-                           max_descendant_excess=0.30)
+                           max_descendant_copy=0.06)
     assert only_desc.components["recall_safety"] == 0.0
