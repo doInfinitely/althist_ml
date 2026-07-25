@@ -22,3 +22,4 @@ modal/__pycache__/
 **/.DS_Store
 *.swp
 .*.swp
+data/analysis/.reward_audit_emb.json
