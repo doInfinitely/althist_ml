@@ -23,3 +23,4 @@ modal/__pycache__/
 *.swp
 .*.swp
 data/analysis/.reward_audit_emb.json
+data/dpo_samples/
