@@ -140,6 +140,41 @@ it never idles into a scale-down. This is what made higher-K feasible.
 Cost: higher-K run ~$9 (arm total ~$89 of $500). Artifacts: `dpo/qwen14b-dpo-hiK`
 (+ merged), `data/analysis/dpo_train_hiK.jsonl` (1,460), `dpo_hiKtrained_scored.jsonl`.
 
+## K=32 — the composite keeps climbing but raw QUALITY plateaus (2026-07-26)
+
+Pushed to K=32 (16 more samples/train paper via the hardened sampler, 0
+failures) → clean multi-paired (min-gap 0.12) → **2,237 pairs** (mean gap 0.306
+— higher K keeps improving pair separation). Trained 1 epoch.
+
+**5-way held-out eval (30 unseen papers):**
+
+| model | pairs/K | composite | wins | raw quality Δ |
+|---|---|---|---|---|
+| base | — | 0.309 | — | — |
+| v1 | 283/K8 | 0.378 | 29/30 | +0.009 |
+| v2 | 497/K8 | 0.455 | 30/30 | +0.014 |
+| K16 | 1460/K16 | 0.512 | 30/30 | **+0.020** |
+| K32 | 2237/K32 | **0.586** | 30/30 | +0.014 |
+
+**The key nuance.** The *composite* reward rises monotonically (K32 best, +0.28
+over base, 30/30 wins), but the **raw annotator quality plateaued at K16** and
+*dipped* at K32 (+0.020 → +0.014, back to v2's level). The K16→K32 composite gain
+came from the softer components — H (0.924→0.926), source-sim, and dist — not from
+quality. Contamination (copy) stayed at zero throughout.
+
+**Reading.** Scaling helps the *substantive* axis (idea quality) up to ~K16, then
+saturates; beyond that, further composite gains come from the softer, more
+gameable reward terms (H/sim/dist). This is the point where "more K" starts
+optimizing the proxy rather than the thing we care about. So **K16 is the sweet
+spot on quality**; K32 buys composite/human-likeness (dist highest at K32) at the
+cost of the quality gain. A cleaner further lever now is likely *reward-side*
+(reweight toward quality, harden H/sim against gaming) or *task-side* (agentic
+trajectories), not just more K.
+
+Cost: K=32 run ~$6 Modal (arm total ~$95 of $500) + Haiku annotation (Anthropic,
+separate). Artifacts: `dpo/qwen14b-dpo-K32` (+ merged),
+`data/analysis/dpo_train_K32.jsonl` (2,237), `dpo_K32trained_scored.jsonl`.
+
 ## Caveats / next
 
 - 283 pairs, single-turn (not agentic), 14B, one seed. Reward is a soft proxy.
