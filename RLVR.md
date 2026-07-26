@@ -210,6 +210,34 @@ Cost: reweight run ~$5 Modal (re-pairing was free; arm total ~$100 of $500).
 Artifacts: `dpo/qwen14b-dpo-K32q` (+merged), `dpo_train_K32q.jsonl`,
 `dpo_K32qtrained_scored.jsonl`. score_dpo.py now takes `--w-*` weight overrides.
 
+## Pairwise Opus judge (2026-07-26) — the finer signal the plateau needs
+
+The quality plateau is signal-bound: Haiku gives quality only as coarse 0-3
+diagnostics, and most ideas cluster at specificity=3 (no resolution). Prototyped
+a **pairwise Opus judge** (`scripts/pairwise_judge.py`) that answers DPO's actual
+question directly — "is idea A or B the stronger proposal?" — judged on
+specificity / novelty / method-concreteness / grounding, with position bias
+controlled by requiring both orders (A,B) and (B,A) to agree.
+
+**Prototype (20 train papers):**
+- **Resolution**: **16/20** pairs that Haiku rated *identically* on quality got a
+  confident, order-consistent winner from Opus. It resolves what the coarse
+  labeler can't.
+- **Different signal**: on the few Haiku-*clear* pairs, Opus agreed only 2/8 —
+  and only 8/20 papers even had a Haiku-clear pair (the rest all-tied at
+  specificity=3). So Haiku's coarse quality ranking is weakly aligned with a
+  holistic judge, i.e. the DPO pairs were often mis-ordered — a plausible
+  mechanism for the plateau.
+- Confidence is modest (0.55-0.73): these are close calls (same paper, same base
+  model), as expected — but consistently resolvable.
+
+Takeaway: a pairwise Opus judge is DPO-native (its output *is* a preference pair,
+no absolute-scale calibration) and has the resolution the absolute labeler lacks.
+The natural test is to build a pairwise-judged DPO set (chosen = judged winner)
+and retrain to see if it breaks the ~+0.02 quality ceiling. Cost of the full
+judge pass is the gate: ~1,700 pairs × 2 orders on Opus ≈ a real API spend, so
+worth scoping before committing.
+
 ## Caveats / next
 
 - 283 pairs, single-turn (not agentic), 14B, one seed. Reward is a soft proxy.
