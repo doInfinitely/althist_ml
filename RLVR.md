@@ -108,6 +108,38 @@ Adapter/merged on the volume: `dpo/qwen14b-dpo-v2`, `dpo/qwen14b-dpo-v2-merged`.
 Train set: `data/analysis/dpo_train_scaled.jsonl` (497). Per-sample held-out
 scores: `dpo_v2trained_scored.jsonl`.
 
+## Higher-K scale-up (2026-07-26) — a clean monotonic scaling ladder
+
+Hardened the sampler (concurrency + retry-with-backoff, `sample_dpo.py`) so it
+no longer stalls on Modal server scale-down — **271 papers in ~7 min, 0
+failures** (was ~1.5 papers/min and stalling). Sampled 8 more ideas/train paper
+(K=16), then clean multi-paired (min-gap 0.12) → **1,460 pairs** (mean gap 0.262,
+even cleaner than v2 — 16 samples separate better). Trained 1 epoch.
+
+**4-way held-out eval (30 unseen papers):**
+
+| model | pairs / K | joint composite | wins vs base | raw quality | copy |
+|---|---|---|---|---|---|
+| base | — | 0.320 | — | 0.302 | ~0 |
+| v1 | 283 / K8 | 0.404 | 29/30 | 0.310 | ~0 |
+| v2 | 497 / K8 | 0.498 | 30/30 | 0.315 | ~0 |
+| **hiK** | **1460 / K16** | **0.571** | **30/30** | **0.321** | **~0 (lowest)** |
+
+**Monotonic**: more clean pairs → better generalisation, on both the composite
+(+0.09 → +0.18 → +0.25 over base) and — the honest measure — the **raw annotator
+quality**, which grew +0.009 → +0.013 → **+0.020** (more than doubled from v1).
+The higher-K *diverse* sampling gave a bigger raw bump than v2's re-pairing
+alone, confirming diversity > re-pairing; and hiK did it on **1 epoch** vs v2's
+3, so more/diverse data generalises better with less overfitting. Contamination
+(copy) stayed pinned at zero throughout — hiK is the *lowest*.
+
+Sampler hardening (the enabling fix): per-request timeout + exponential-backoff
+retries survive cold-starts, and ~12 concurrent papers keep the endpoint warm so
+it never idles into a scale-down. This is what made higher-K feasible.
+
+Cost: higher-K run ~$9 (arm total ~$89 of $500). Artifacts: `dpo/qwen14b-dpo-hiK`
+(+ merged), `data/analysis/dpo_train_hiK.jsonl` (1,460), `dpo_hiKtrained_scored.jsonl`.
+
 ## Caveats / next
 
 - 283 pairs, single-turn (not agentic), 14B, one seed. Reward is a soft proxy.

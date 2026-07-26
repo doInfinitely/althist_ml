@@ -30,7 +30,7 @@ hf_cache = modal.Volume.from_name("althist-hf-cache", create_if_missing=True)
 
 
 @app.function(image=image, gpu=GPU, volumes={"/root/.cache/huggingface": hf_cache},
-              timeout=60 * 90)
+              timeout=60 * 60 * 3, retries=0)  # 3h; no retry so a timeout fails loud
 def train(pairs_path: str = "/root/.cache/huggingface/dpo/dpo_train.jsonl",
           out_tag: str = "qwen14b-dpo", epochs: float = 3.0, beta: float = 0.1,
           lr: float = 5e-6, lora_r: int = 16, batch: int = 1, grad_accum: int = 8):

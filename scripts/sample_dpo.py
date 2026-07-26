@@ -19,7 +19,10 @@ import argparse
 import json
 import os
 import sys
+import threading
+import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -71,18 +74,30 @@ def parse_idea(text):
     return None
 
 
-def sample(base_url, model, key, messages, k, temperature, max_tokens):
+def sample(base_url, model, key, messages, k, temperature, max_tokens,
+           retries=8, req_timeout=180):
+    """One chat request for k samples, hardened against the Modal server scaling
+    to zero mid-run: short per-request timeout + exponential backoff retries so a
+    scaled-down/cold-starting endpoint recovers instead of hanging the run."""
     body = json.dumps({
         "model": model, "messages": messages, "n": k,
         "temperature": temperature, "max_tokens": max_tokens,
     }).encode()
-    req = urllib.request.Request(
-        base_url.rstrip("/") + "/chat/completions", data=body,
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {key}"})
-    with urllib.request.urlopen(req, timeout=600) as resp:
-        data = json.loads(resp.read())
-    return [c["message"]["content"] for c in data["choices"]]
+    url = base_url.rstrip("/") + "/chat/completions"
+    last = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"Content-Type": "application/json",
+                         "Authorization": f"Bearer {key}"})
+            with urllib.request.urlopen(req, timeout=req_timeout) as resp:
+                data = json.loads(resp.read())
+            return [c["message"]["content"] for c in data["choices"]]
+        except Exception as e:  # timeout, 5xx during cold-start, conn reset, JSON
+            last = e
+            time.sleep(min(90, 5 * 2 ** attempt))  # 5,10,20,40,80,90,90,90
+    raise last
 
 
 def main():
@@ -97,6 +112,8 @@ def main():
     ap.add_argument("--papers", help="comma-separated paper ids to sample (default: all)")
     ap.add_argument("--id-offset", type=int, default=0,
                     help="sample_id base (use 8 for a second K=8 wave -> ids 8..15)")
+    ap.add_argument("--workers", type=int, default=12,
+                    help="concurrent papers in flight (keeps the server warm)")
     args = ap.parse_args()
 
     model, base_url = args.provider.split("@", 1)
@@ -112,34 +129,47 @@ def main():
     if args.limit:
         pids = pids[: args.limit]
 
-    done = ok = 0
-    for pid in pids:
-        dst = out / f"{pid}.jsonl"
-        if dst.exists():
-            done += 1
-            continue
+    todo = [pid for pid in pids if not (out / f"{pid}.jsonl").exists()]
+    print(f"{len(todo)} papers to sample ({len(pids) - len(todo)} already done), "
+          f"{args.workers} concurrent", file=sys.stderr)
+
+    counts = {"ok": 0, "ideas": 0, "fail": 0}
+    lock = threading.Lock()
+
+    def work(pid):
         paper = corpus.load(pid)
         if paper.idea is None or len(paper.sources) < 2:
-            continue
+            return
         msgs = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": build_user(paper)}]
         try:
             contents = sample(base_url, model, key, msgs, args.k,
                               args.temperature, args.max_tokens)
         except Exception as e:
-            print(f"  {pid}: request failed ({e})", file=sys.stderr)
-            continue
-        ideas = [parse_idea(c) for c in contents]
-        ideas = [x for x in ideas if x]
+            with lock:
+                counts["fail"] += 1
+            print(f"  {pid}: request failed after retries ({repr(e)[:60]})",
+                  file=sys.stderr)
+            return
+        ideas = [x for x in (parse_idea(c) for c in contents) if x]
         if not ideas:
             print(f"  {pid}: 0/{args.k} parsed", file=sys.stderr)
-            continue
-        with open(dst, "w") as f:
+            return
+        with open(out / f"{pid}.jsonl", "w") as f:
             for i, idea in enumerate(ideas):
                 f.write(json.dumps({"paper_id": pid,
                                     "sample_id": args.id_offset + i, **idea}) + "\n")
-        done += 1
-        ok += len(ideas)
+        with lock:
+            counts["ok"] += 1
+            counts["ideas"] += len(ideas)
+            if counts["ok"] % 25 == 0:
+                print(f"  {counts['ok']}/{len(todo)} papers", file=sys.stderr)
+
+    with ThreadPoolExecutor(max_workers=args.workers) as ex:
+        list(ex.map(work, todo))
+    done, ok = counts["ok"], counts["ideas"]
+    if counts["fail"]:
+        print(f"  {counts['fail']} papers failed after retries", file=sys.stderr)
         print(f"  {pid}: {len(ideas)}/{args.k}", flush=True)
     print(f"\ndone: {done} papers, {ok} ideas -> {out}")
 
