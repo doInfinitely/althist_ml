@@ -68,8 +68,8 @@ def annotate_lenient(provider, paper_id, titles, idea):
             _clamp_int(diag.get("boilerplate_score")),
             _clamp_int(diag.get("surface_stitching_score")))
 
-# reward weights (scripts/reward_assemble.py)
-W = {"dist": 0.30, "qual": 0.30, "H": 0.15, "sim": 0.15, "copy": 0.10}
+# reward weights (scripts/reward_assemble.py); override per-run via --w-*
+DEFAULT_W = {"dist": 0.30, "qual": 0.30, "H": 0.15, "sim": 0.15, "copy": 0.10}
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sample_dpo import SYSTEM, build_user  # noqa: E402  reuse the exact prompt
 
@@ -100,7 +100,12 @@ def main():
     ap.add_argument("--papers-file", help="json list: restrict pairing to these papers")
     ap.add_argument("--workers", type=int, default=8,
                     help="concurrent annotation requests")
+    for k, v in DEFAULT_W.items():
+        ap.add_argument(f"--w-{k}", type=float, default=v,
+                        help=f"reward weight for {k} (default {v})")
     args = ap.parse_args()
+    W = {k: getattr(args, f"w_{k}") for k in DEFAULT_W}
+    print(f"reward weights: {W}", file=sys.stderr)
 
     corpus = Corpus(args.papers_dir)
     samples = []

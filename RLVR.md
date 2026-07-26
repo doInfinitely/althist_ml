@@ -175,6 +175,41 @@ Cost: K=32 run ~$6 Modal (arm total ~$95 of $500) + Haiku annotation (Anthropic,
 separate). Artifacts: `dpo/qwen14b-dpo-K32` (+ merged),
 `data/analysis/dpo_train_K32.jsonl` (2,237), `dpo_K32trained_scored.jsonl`.
 
+## Reward reweighting toward quality (2026-07-26) — doesn't break the plateau
+
+The K32 plateau suggested reweighting the reward toward quality. Re-paired the
+*same* K32 samples (free — already scored/annotated) with a quality-dominant
+weighting (qual 0.60, sim 0.20, copy 0.20; H/dist 0) → 2,239 pairs (mean gap
+0.397, sharper contrasts), trained 1 epoch (`qwen14b-dpo-K32q`).
+
+**Held-out eval (30 unseen papers):**
+
+| component | base | K16 | K32 | K32q (quality-wt) |
+|---|---|---|---|---|
+| **raw quality** | 0.302 | **0.321** | 0.315 | 0.316 |
+| source-sim | 0.268 | 0.272 | 0.275 | **0.283** |
+| copy | ~0 | 0.0006 | 0.0009 | **0.0005** |
+| its-own reward (0.6q+0.2sim−0.2copy) | 0.193 | 0.335 | 0.463 | **0.600** |
+
+**Reweighting moved the model on the reweighted reward** (K32q best, 0.600) and
+improved **grounding** (sim highest) and **contamination** (copy lowest) — but
+**raw annotator quality stayed at 0.316, still below K16's 0.321.** It did not
+break the quality ceiling; it just shifted which components moved (grounding
+instead of the softer H/dist).
+
+**Reading — the binding constraint is the quality *signal*, not the weights.**
+Annotator quality saturates ~+0.02 (K16) regardless of weighting. The likely
+causes: (a) the Haiku quality signal is coarse (0–3 integer specificity/
+boilerplate/stitching — limited resolution to reward-optimise against), and/or
+(b) the base 14B's idea-quality ceiling. So the productive levers are no longer
+reward-weight or data-volume tweaks — they are a **finer/human quality signal**
+or a **more capable base / agentic task**, per the caveats below. Useful
+byproduct: K32q is the best-grounded, lowest-contamination model of the set.
+
+Cost: reweight run ~$5 Modal (re-pairing was free; arm total ~$100 of $500).
+Artifacts: `dpo/qwen14b-dpo-K32q` (+merged), `dpo_train_K32q.jsonl`,
+`dpo_K32qtrained_scored.jsonl`. score_dpo.py now takes `--w-*` weight overrides.
+
 ## Caveats / next
 
 - 283 pairs, single-turn (not agentic), 14B, one seed. Reward is a soft proxy.
