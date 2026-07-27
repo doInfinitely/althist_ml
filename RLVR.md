@@ -238,6 +238,53 @@ and retrain to see if it breaks the ~+0.02 quality ceiling. Cost of the full
 judge pass is the gate: ~1,700 pairs × 2 orders on Opus ≈ a real API spend, so
 worth scoping before committing.
 
+## Full pairwise-judged DPO (2026-07-26) — the plateau was a MEASUREMENT artifact
+
+Judged K32 candidate pairs with the pairwise Opus judge (composite reward used
+only to *select* spread pairs; Opus decides the winner, both orders, kept if
+consistent) → **1,261 pairwise-judged pairs**. Headline from the judging itself:
+**Opus reversed the cheap-reward ordering on 42%** of pairs — the composite
+reward and a good judge agree only ~58% of the time, so the old DPO pairs were
+substantially mis-ordered. Trained 1 epoch (`qwen14b-dpo-pw`).
+
+**Eval, two ways — and they disagree, which is the whole point:**
+
+*Haiku (coarse) raw quality:* pw = 0.314 — **below** K16's 0.321. On the coarse
+metric, pairwise training looks like no improvement.
+
+*Opus pairwise head-to-head (win-rate among decided, n=90 each):*
+
+| matchup | win / lose / tie | win-rate |
+|---|---|---|
+| **pw vs base** | 42 / 28 / 20 | **60%** |
+| **pw vs K16** | 40 / 31 / 19 | **56%** |
+| K16 vs base (anchor) | 36 / 33 / 21 | 52% |
+
+**The ordering flips between metrics.** Haiku ranks K16 > pw; Opus ranks pw > K16
+— and says K16 is barely better than base (52%, a coin flip) despite K16 having
+the highest *Haiku* quality. So the "quality plateau" was largely a **measurement
+artifact of the coarse 0-3 signal**: K16's Haiku-quality gain didn't correspond to
+ideas a fine judge prefers, while pw's improvement — invisible to Haiku — is real
+under Opus. Fixing the signal (for training *and* eval) is what broke through.
+
+**Honest limits.** Win rates are modest (56-60%) and borderline-significant at
+n=90 (pw-vs-base binomial p≈0.06; pw-vs-K16 not significant alone). The robust,
+interpretable finding is the **contrast**: the finer training signal produces
+ideas the finer judge prefers over both base and the coarse-signal peak, and the
+coarse metric mis-ranks them. Contamination (copy) stayed at zero. Firming up
+significance wants more held-out pairs; the direction is clear.
+
+**Conclusion of the RLVR arc.** "Signal-bound, not recipe-bound" is confirmed and
+resolved: the recipe (reward → diverse sampling → quality-gated pairs → DPO) was
+sound; the binding constraint was the coarse quality *signal*, on both ends.
+Replacing it with a pairwise Opus judge — DPO-native, high-resolution — produces a
+model a strong judge prefers to every earlier variant, where more-data and
+reward-reweighting had plateaued. Cost: pairwise judging + head-to-head ≈ Opus
+API (separate); Modal at ~$103 of $500.
+
+Artifacts: `dpo/qwen14b-dpo-pw` (+merged), `data/analysis/dpo_train_pw.jsonl`
+(1,261), `dpo_pwtrained_scored.jsonl`, `.pw_judgments.jsonl` (judgment cache).
+
 ## Caveats / next
 
 - 283 pairs, single-turn (not agentic), 14B, one seed. Reward is a soft proxy.
