@@ -33,6 +33,7 @@ DIRS = {
     "K32": "data/dpo_samples_K32trained",
     "K32q": "data/dpo_samples_K32qtrained",
     "pw": "data/dpo_samples_pwtrained",
+    "grpo": "data/dpo_samples_grpotrained",
 }
 
 

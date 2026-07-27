@@ -371,13 +371,43 @@ hangs) is a trl-vLLM-serve weight-sync/generation interaction that needs a
 dedicated vLLM debugging session (e.g. pin a known-good trl+vLLM pair, or use
 colocate on a bigger single GPU / H100), not more blind re-runs on scarce 2×A100.
 
-**Status: GRPO pipeline complete and de-risked — every component validated end to
-end (through the backward pass); a converged, evaluated run is gated on a flaky
-generation hang.** Nine infra issues cleared across the build. The substantive
-RLVR result — pairwise-judged DPO significantly beating base and the coarse peak,
-judge distilled to an 85% RM — stands as the arc's headline; online GRPO is the
-extension, mechanically working and one flaky-hang fix from convergence.
-Re-run scaffold: `modal run --detach modal/grpo_train.py::train --steps 60`.
+**Resolution (2026-07-27): dropped vLLM entirely → GRPO ran to completion.**
+Rather than roulette vLLM versions against the flaky serve stall, switched to
+`use_vllm=False` (HF generation) on a **single A100** (14B trainer + 3B RM, no
+vLLM copy) — which also removed the 2×A100 dependency. GRPO trained 60 steps
+cleanly; **mean RM reward climbed 0.14 → 0.98** (first vs last third). Policy
+saved (`dpo/qwen14b-grpo`).
+
+**But the held-out Opus eval says it reward-hacked:**
+
+| matchup | win / lose / tie | win-rate | p |
+|---|---|---|---|
+| GRPO vs base | 87 / 84 / 38 | 50.9% | 0.88 — **coin flip** |
+| GRPO vs pw | 62 / 105 / 42 | 37.1% | **0.0011 — GRPO significantly WORSE** |
+
+The RM reward went up 7× in training, yet held-out quality is no better than base
+and **significantly worse than the offline pairwise-DPO model (pw)**. Classic
+online **reward-hacking**: GRPO generates new rollouts and exploits the 15% gap in
+the 85%-faithful RM, whereas offline DPO trains on the judge's *fixed* preference
+pairs and can't drift off-distribution. (60 steps, 3B RM, untuned KL — the regime
+where over-optimization is expected.)
+
+### Conclusion of the RLVR arc
+- **Offline pairwise-judged DPO is the robust winner**: significantly beats base
+  *and* the coarse-signal peak under the Opus judge (p<0.05), contamination
+  pinned at zero.
+- **Online GRPO on the distilled RM over-optimizes the proxy**: RM reward soars
+  but Opus-judged quality doesn't — it's a coin flip vs base and *worse* than DPO.
+- So the distilled RM (85%) is faithful enough for **offline preference
+  selection** but not robust as an **online RL reward** at this scale. The
+  clean, significant result is the DPO one; GRPO reproduced the well-known
+  online-RL-over-optimizes-an-imperfect-reward-model failure in this setting.
+  Mitigations (stronger KL, bigger/ensemble RM, held-out-judge early stopping)
+  are the path if online RL is pursued further.
+
+GRPO pipeline: 11 infra issues cleared, runs end-to-end on 1×A100 via HF
+generation (`modal/grpo_train.py`; `train`/`merge`/`generate`). Re-run:
+`modal run --detach modal/grpo_train.py::train --steps 60`.
 
 **What this doesn't change:** the substantive realization of "RL with the
 pairwise judge" is the **reward-model distillation** (85% agreement), which is

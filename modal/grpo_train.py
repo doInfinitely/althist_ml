@@ -4,19 +4,17 @@ The RM (modal/reward_model.py, ~85% agreement with the Opus pairwise judge) is a
 cheap in-process reward, so GRPO needs no Opus in the loop. Single-turn ideation
 task (same prompts as the DPO runs). vLLM colocate for rollouts; LoRA policy.
 
-STATUS (2026-07-27): pipeline built and correct — RM loads, dataset builds, vLLM
-colocate initialises, distributed env set. Seven infra issues were cleared to get
-here (trl vllm_mode API, server-vs-colocate, vLLM V1/V0 worker mismatch, NCCL
-weight-sync needing 2 GPUs, KeyError RANK, GPU capacity). It is BLOCKED on GPU
-RESOURCES, not logic:
-  - the comparable 14B run needs >=2 A100 (two 14B copies + RM); Modal 2xA100
-    capacity was unavailable during this session (only 1xA100 scheduled).
-  - the 1xA100 / 7B fallback OOMs: vLLM colocate cannot fit its KV cache alongside
-    the resident training copy on a single 80GB card (even with the RM on CPU).
-Run when 2xA100 capacity is available: `modal run --detach modal/grpo_train.py::train --steps 150`.
+OUTCOME (2026-07-27): after clearing 11 infra issues (trl vllm_mode API,
+server-vs-colocate, vLLM V1/V0 worker, NCCL 2-GPU sync, KeyError RANK, GPU
+capacity, colocate OOM, enforce-eager arg, DDP+reentrant checkpointing, flaky
+vLLM-serve gen stall, peft merge mismatch), GRPO runs end-to-end via HF
+generation (use_vllm=False) on ONE A100 — no vLLM, no 2-GPU dependency. Trained
+60 steps: RM reward 0.14 -> 0.98. BUT held-out Opus eval shows reward-hacking:
+coin-flip vs base (p=0.88), significantly WORSE than offline pairwise-DPO
+(37% win, p=0.001). See RLVR.md — offline DPO is the robust winner; online GRPO
+over-optimizes the 85% RM proxy.
 
-    modal run modal/grpo_train.py::train --steps 2   # smoke
-    modal run modal/grpo_train.py::train --steps 150  # real (needs 2xA100)
+    modal run --detach modal/grpo_train.py::train --steps 60   # HF-gen, 1xA100
 """
 
 import os
@@ -27,7 +25,10 @@ import modal
 # unavailable, a 7B policy runs on a single GPU (vLLM + trainer + RM co-resident).
 POLICY = os.environ.get("ALTHIST_GRPO_POLICY", "Qwen/Qwen2.5-14B-Instruct")
 RM_BASE = os.environ.get("ALTHIST_RM_BASE", "Qwen/Qwen2.5-3B-Instruct")
-GPU = os.environ.get("ALTHIST_GRPO_GPU", "A100-80GB:2")
+# Single A100: HF-generation GRPO (use_vllm=False). Drops the flaky trl-vLLM-serve
+# weight-sync/generation stall AND the 2xA100 capacity dependency — 14B trainer +
+# 3B RM fit on one 80GB card with no vLLM copy. Rollouts are slower but robust.
+GPU = os.environ.get("ALTHIST_GRPO_GPU", "A100-80GB:1")
 NDEV = int(GPU.split(":")[1]) if ":" in GPU else 1
 
 image = (
@@ -52,31 +53,7 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
           steps: int = 60, num_gen: int = 4, lr: float = 1e-6, beta: float = 0.04):
     import json
     import os
-    import socket
-    import subprocess
-    import time
 
-    # SERVER mode (2 GPUs): dedicate the last GPU to `trl vllm-serve`, train the
-    # single 14B on the rest. Avoids colocate's DDP-replicate-14B-per-GPU +
-    # vLLM-per-GPU OOM. NCCL weight-sync between trainer and server needs the 2
-    # GPUs (fine here). Mask GPUs before torch initialises CUDA.
-    serve_dev = str(NDEV - 1)
-    train_devs = ",".join(str(i) for i in range(NDEV - 1)) or "0"
-    # trl 0.18 vllm-serve is V1-native (no VLLM_USE_V1=0 — that V0 carry-over from
-    # trl 0.16 caused a first-gen stall). --enforce-eager skips CUDA-graph capture,
-    # the likely 0-tok/s hang on the first generate.
-    serve_env = {**os.environ, "CUDA_VISIBLE_DEVICES": serve_dev}
-    vllm_proc = subprocess.Popen(
-        ["trl", "vllm-serve", "--model", POLICY,
-         "--gpu-memory-utilization", "0.9", "--enforce-eager", "true"], env=serve_env)
-    for _ in range(120):
-        try:
-            with socket.create_connection(("0.0.0.0", 8000), timeout=2):
-                break
-        except OSError:
-            time.sleep(10)
-    print("vLLM server up on :8000", flush=True)
-    os.environ["CUDA_VISIBLE_DEVICES"] = train_devs
     # torch-distributed env normally set by accelerate launch (KeyError RANK else)
     for k, v in {"RANK": "0", "LOCAL_RANK": "0", "WORLD_SIZE": "1",
                  "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": "29500"}.items():
@@ -89,8 +66,7 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
                               AutoTokenizer)
     from trl import GRPOConfig, GRPOTrainer
 
-    # RM on GPU 0 alongside the 14B trainer (vLLM is on the dedicated GPU 1, so
-    # GPU 0 has room: 14B trainer + 3B RM ~60GB < 80GB). CPU was too slow.
+    # RM on GPU 0 with the trainer (no vLLM copy on this GPU in HF-gen mode).
     rm_dir = f"/root/.cache/huggingface/dpo/{rm_tag}"
     rm_dev = "cuda:0"
     rm_tok = AutoTokenizer.from_pretrained(rm_dir)
@@ -129,7 +105,7 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
         per_device_train_batch_size=num_gen, gradient_accumulation_steps=2,
         max_prompt_length=1024, max_completion_length=320,
         learning_rate=lr, beta=beta, temperature=0.9,
-        use_vllm=True, vllm_mode="server",   # connects to the vllm-serve above
+        use_vllm=False,   # HF generation — robust vs the flaky vLLM-serve stall
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},  # DDP-compatible
         bf16=True, logging_steps=1,
@@ -149,5 +125,69 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
         print(f"  step {h.get('step')}: reward={h.get('reward')} "
               f"kl={h.get('kl')}", flush=True)
     print(f"saved GRPO policy -> {cfg.output_dir}", flush=True)
-    vllm_proc.terminate()
     return {"steps": len(hist), "final_reward": hist[-1].get("reward") if hist else None}
+
+
+@app.function(image=image, gpu="A100-80GB:1",
+              volumes={"/root/.cache/huggingface": hf_cache}, timeout=60 * 30)
+def merge(adapter_tag: str = "qwen14b-grpo", out_tag: str = "qwen14b-grpo-merged"):
+    """Merge the GRPO LoRA adapter into the base (peft 0.15.2 — matches training;
+    dpo_train.py's merge uses an older peft that can't read this adapter_config)."""
+    import glob
+    import os
+
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    adir = f"/root/.cache/huggingface/dpo/{adapter_tag}"
+    # trainer may have saved only checkpoint-N/ (save_strategy=steps); prefer the
+    # top-level adapter, else the latest checkpoint.
+    if not os.path.exists(os.path.join(adir, "adapter_config.json")):
+        cps = sorted(glob.glob(f"{adir}/checkpoint-*"),
+                     key=lambda p: int(p.split("-")[-1]))
+        adir = cps[-1] if cps else adir
+    print(f"merging adapter from {adir}", flush=True)
+    odir = f"/root/.cache/huggingface/dpo/{out_tag}"
+    base = AutoModelForCausalLM.from_pretrained(
+        POLICY, torch_dtype=torch.bfloat16, device_map="cpu")
+    merged = PeftModel.from_pretrained(base, adir).merge_and_unload()
+    merged.save_pretrained(odir, safe_serialization=True)
+    AutoTokenizer.from_pretrained(POLICY).save_pretrained(odir)
+    hf_cache.commit()
+    print(f"merged model -> {odir}", flush=True)
+    return odir
+
+
+@app.function(image=image, gpu="A100-80GB:1",
+              volumes={"/root/.cache/huggingface": hf_cache}, timeout=60 * 60)
+def generate(prompts_path: str, out_path: str, model_tag: str = "qwen14b-grpo-merged",
+             k: int = 8, temperature: float = 0.9, max_new: int = 384):
+    """Sample k ideas/paper from a merged policy via HF generate (same image the
+    model was saved in — avoids the vllm_serve version mismatch)."""
+    import json
+
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    mdir = f"/root/.cache/huggingface/dpo/{model_tag}"
+    tok = AutoTokenizer.from_pretrained(mdir)
+    model = AutoModelForCausalLM.from_pretrained(
+        mdir, torch_dtype=torch.bfloat16, device_map="auto").eval()
+    rows = [json.loads(l) for l in open(prompts_path)]
+    out = []
+    for r in rows:
+        text = tok.apply_chat_template(r["prompt"], tokenize=False,
+                                       add_generation_prompt=True)
+        ids = tok(text, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            gen = model.generate(**ids, do_sample=True, temperature=temperature,
+                                  top_p=0.95, num_return_sequences=k,
+                                  max_new_tokens=max_new, pad_token_id=tok.eos_token_id)
+        for o in gen:
+            comp = tok.decode(o[ids.input_ids.shape[1]:], skip_special_tokens=True)
+            out.append({"paper_id": r["paper_id"], "completion": comp})
+    with open(out_path, "w") as f:
+        json.dump(out, f)
+    hf_cache.commit()
+    print(f"wrote {len(out)} completions -> {out_path}", flush=True)
