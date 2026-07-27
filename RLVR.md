@@ -329,6 +329,38 @@ now *feasible*; it's a heavier env than the DPO pipeline. Cheaper alternative th
 captures most of the value: RM-score a large candidate-pair set (no Opus cost) →
 bigger clean pairwise-signal DPO → retrain.
 
+## Online GRPO (2026-07-27) — pipeline built; blocked on GPU resources, not logic
+
+Built the full online-GRPO pipeline (`modal/grpo_train.py`): 14B LoRA policy,
+single-turn ideation prompts, **reward = the distilled 3B RM** (no Opus in the
+loop), vLLM rollouts. Getting the harness to run cleared **seven** distinct infra
+issues: trl `vllm_mode` API differences across versions; server-vs-colocate;
+vLLM V1-engine vs trl's V0 worker (`get_state_cls NotImplementedError`, fixed
+with `VLLM_USE_V1=0` in server mode); trl server-mode NCCL weight-sync requiring
+≥2 GPUs; `KeyError: 'RANK'` (set the torch-distributed env manually); and GPU
+scheduling. The pipeline now reaches: RM loads, dataset builds, distributed env
+set, vLLM colocate initialises.
+
+**It is blocked on GPU resources, not code:**
+- The comparable **14B run needs ≥2×A100** (two 14B copies + the RM). Modal
+  2×A100 capacity was unavailable this session — 4× and 2× both sat in the
+  scheduler queue; only 1×A100 scheduled (as it had all session for the DPO/RM
+  runs).
+- The **1×A100 / 7B fallback OOMs**: vLLM colocate cannot fit its KV cache
+  alongside the resident 7B training copy on one 80GB card (persists even with
+  the RM moved to CPU) — the two 7B copies alone exceed comfortable margins.
+
+So online GRPO with the (distilled) pairwise judge is **built and de-risked to
+the point of GPU acquisition**; the training run itself awaits a 2×A100 worker.
+Re-run when capacity frees: `modal run --detach modal/grpo_train.py::train --steps 150`.
+
+**What this doesn't change:** the substantive realization of "RL with the
+pairwise judge" is the **reward-model distillation** (85% agreement), which is
+done and validated — it's the enabler GRPO consumes. GRPO on top is the
+remaining execution, gated by multi-GPU capacity. The already-complete result —
+pairwise-judged DPO significantly beating base and the coarse-signal peak — stands
+as the arc's headline; GRPO would be the online extension of the same signal.
+
 ## Caveats / next
 
 - 283 pairs, single-turn (not agentic), 14B, one seed. Reward is a soft proxy.
