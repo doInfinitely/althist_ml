@@ -267,12 +267,20 @@ artifact of the coarse 0-3 signal**: K16's Haiku-quality gain didn't correspond 
 ideas a fine judge prefers, while pw's improvement — invisible to Haiku — is real
 under Opus. Fixing the signal (for training *and* eval) is what broke through.
 
-**Honest limits.** Win rates are modest (56-60%) and borderline-significant at
-n=90 (pw-vs-base binomial p≈0.06; pw-vs-K16 not significant alone). The robust,
-interpretable finding is the **contrast**: the finer training signal produces
-ideas the finer judge prefers over both base and the coarse-signal peak, and the
-coarse metric mis-ranks them. Contamination (copy) stayed at zero. Firming up
-significance wants more held-out pairs; the direction is clear.
+**Significance (firmed up, n≈236/matchup — 8 matched pairs/paper, cached,
+`scripts/head2head.py`):**
+
+| matchup | win / lose / tie | win-rate | binomial p |
+|---|---|---|---|
+| pw vs base | 107 / 70 / 59 | **60.5%** | **0.0066** ✓ |
+| pw vs K16 | 102 / 74 / 61 | **58.0%** | **0.042** ✓ |
+| K16 vs base (anchor) | 100 / 84 / 53 | 54.3% | 0.27 — n.s. |
+
+Win rates held almost exactly from the n=90 pass (60→60.5, 56→58, 52→54), and
+both pw matchups are now **statistically significant** (p<0.05). The anchor stays
+non-significant: **K16 — the highest-*Haiku*-quality model — has no distinguishable
+advantage over base under the fine judge.** That is the plateau-as-artifact result
+with significance behind it. Contamination (copy) stayed at zero throughout.
 
 **Conclusion of the RLVR arc.** "Signal-bound, not recipe-bound" is confirmed and
 resolved: the recipe (reward → diverse sampling → quality-gated pairs → DPO) was
