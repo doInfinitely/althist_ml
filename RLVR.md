@@ -329,7 +329,7 @@ now *feasible*; it's a heavier env than the DPO pipeline. Cheaper alternative th
 captures most of the value: RM-score a large candidate-pair set (no Opus cost) →
 bigger clean pairwise-signal DPO → retrain.
 
-## Online GRPO (2026-07-27) — pipeline built; blocked on GPU resources, not logic
+## Online GRPO (2026-07-27) — runs mechanically on 2-GPU server mode; convergence is a tuning pass away
 
 Built the full online-GRPO pipeline (`modal/grpo_train.py`): 14B LoRA policy,
 single-turn ideation prompts, **reward = the distilled 3B RM** (no Opus in the
@@ -341,18 +341,28 @@ with `VLLM_USE_V1=0` in server mode); trl server-mode NCCL weight-sync requiring
 scheduling. The pipeline now reaches: RM loads, dataset builds, distributed env
 set, vLLM colocate initialises.
 
-**It is blocked on GPU resources, not code:**
-- The comparable **14B run needs ≥2×A100** (two 14B copies + the RM). Modal
-  2×A100 capacity was unavailable this session — 4× and 2× both sat in the
-  scheduler queue; only 1×A100 scheduled (as it had all session for the DPO/RM
-  runs).
-- The **1×A100 / 7B fallback OOMs**: vLLM colocate cannot fit its KV cache
-  alongside the resident 7B training copy on one 80GB card (persists even with
-  the RM moved to CPU) — the two 7B copies alone exceed comfortable margins.
+**Update: capacity freed and it RAN — the config, not capacity, was the last
+wall, and it's now mechanically working:**
+- 2×A100 eventually scheduled. The first config (colocate, 2 GPUs) **OOM'd at
+  load** — trl colocate DDP-replicates the full 14B on *each* GPU *and* colocates
+  vLLM per GPU → GPU 0 filled (79 GB used). Fixed by switching to **server mode**:
+  dedicated vLLM GPU (last) + single 14B trainer (GPU 0) + RM on CPU.
+- Server mode **runs**: `trl vllm-serve` came up, the trainer connected, LoRA
+  weight-sync worked (`POST /update_named_param 200`), and vLLM began generating
+  rollouts (`POST /generate 200`) — **no OOM, all seven infra walls cleared**.
 
-So online GRPO with the (distilled) pairwise judge is **built and de-risked to
-the point of GPU acquisition**; the training run itself awaits a 2×A100 worker.
-Re-run when capacity frees: `modal run --detach modal/grpo_train.py::train --steps 150`.
+**Remaining gap to a *completed* run:** the first training step stalled at
+generation (vLLM "Processed prompts 0/12, 0 tok/s") and RM-on-CPU scoring is too
+slow for 150 steps inside the 3 h function timeout (and `save_strategy="no"` means
+a timeout saves nothing). A completed + evaluated GRPO run needs a tuning pass:
+RM on a GPU for reward throughput (or a smaller RM), resolve the first-gen stall
+(likely V0-engine/weight-sync interaction — try dropping `VLLM_USE_V1=0` or
+`enforce_eager`), and bounded steps with intermediate checkpointing. That is
+straightforward tuning, but it is more multi-GPU iteration.
+
+So GRPO is **proven to run end-to-end mechanically** (policy↔vLLM sync + reward +
+generation on the 2-GPU server config); a *converged, evaluated* run is a tuning
+pass away. Re-run scaffold: `modal run --detach modal/grpo_train.py::train --steps 60`.
 
 **What this doesn't change:** the substantive realization of "RL with the
 pairwise judge" is the **reward-model distillation** (85% agreement), which is

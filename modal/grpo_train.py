@@ -49,13 +49,32 @@ hf_cache = modal.Volume.from_name("althist-hf-cache", create_if_missing=True)
               timeout=60 * 60 * 3, retries=0)
 def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
           rm_tag: str = "qwen3-rm", out_tag: str = "qwen14b-grpo",
-          steps: int = 150, num_gen: int = 8, lr: float = 1e-6, beta: float = 0.04):
+          steps: int = 150, num_gen: int = 6, lr: float = 1e-6, beta: float = 0.04):
     import json
     import os
+    import socket
+    import subprocess
+    import time
 
-    # trl GRPO (colocate) expects the torch-distributed env normally set by
-    # `accelerate launch`/`torchrun`; running via `modal run` we set it for a
-    # single process (KeyError: 'RANK' otherwise).
+    # SERVER mode (2 GPUs): dedicate the last GPU to `trl vllm-serve`, train the
+    # single 14B on the rest. Avoids colocate's DDP-replicate-14B-per-GPU +
+    # vLLM-per-GPU OOM. NCCL weight-sync between trainer and server needs the 2
+    # GPUs (fine here). Mask GPUs before torch initialises CUDA.
+    serve_dev = str(NDEV - 1)
+    train_devs = ",".join(str(i) for i in range(NDEV - 1)) or "0"
+    serve_env = {**os.environ, "CUDA_VISIBLE_DEVICES": serve_dev, "VLLM_USE_V1": "0"}
+    vllm_proc = subprocess.Popen(
+        ["trl", "vllm-serve", "--model", POLICY,
+         "--gpu-memory-utilization", "0.9"], env=serve_env)
+    for _ in range(120):
+        try:
+            with socket.create_connection(("0.0.0.0", 8000), timeout=2):
+                break
+        except OSError:
+            time.sleep(10)
+    print("vLLM server up on :8000", flush=True)
+    os.environ["CUDA_VISIBLE_DEVICES"] = train_devs
+    # torch-distributed env normally set by accelerate launch (KeyError RANK else)
     for k, v in {"RANK": "0", "LOCAL_RANK": "0", "WORLD_SIZE": "1",
                  "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": "29500"}.items():
         os.environ.setdefault(k, v)
@@ -67,10 +86,9 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
                               AutoTokenizer)
     from trl import GRPOConfig, GRPOTrainer
 
-    # colocate: in-process vLLM shares the training GPU; no server, no NCCL sync.
-    # RM on CPU to leave GPU memory for the two 7B copies (training + vLLM KV).
+    # RM on CPU to keep GPU 0 entirely for the 14B trainer.
     rm_dir = f"/root/.cache/huggingface/dpo/{rm_tag}"
-    rm_dev = "cuda:1" if torch.cuda.device_count() >= 2 else "cpu"
+    rm_dev = "cpu"
     rm_tok = AutoTokenizer.from_pretrained(rm_dir)
     rm_base = AutoModelForSequenceClassification.from_pretrained(
         RM_BASE, num_labels=1, torch_dtype=torch.bfloat16)
@@ -107,7 +125,7 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
         per_device_train_batch_size=num_gen, gradient_accumulation_steps=2,
         max_prompt_length=1024, max_completion_length=384,
         learning_rate=lr, beta=beta, temperature=0.9,
-        use_vllm=True, vllm_mode="colocate", vllm_gpu_memory_utilization=0.5,
+        use_vllm=True, vllm_mode="server",   # connects to the vllm-serve above
         gradient_checkpointing=True, bf16=True, logging_steps=1,
         save_strategy="no", report_to=[], log_completions=False,
     )
@@ -124,4 +142,5 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
         print(f"  step {h.get('step')}: reward={h.get('reward')} "
               f"kl={h.get('kl')}", flush=True)
     print(f"saved GRPO policy -> {cfg.output_dir}", flush=True)
+    vllm_proc.terminate()
     return {"steps": len(hist), "final_reward": hist[-1].get("reward") if hist else None}
