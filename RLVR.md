@@ -293,6 +293,42 @@ API (separate); Modal at ~$103 of $500.
 Artifacts: `dpo/qwen14b-dpo-pw` (+merged), `data/analysis/dpo_train_pw.jsonl`
 (1,261), `dpo_pwtrained_scored.jsonl`, `.pw_judgments.jsonl` (judgment cache).
 
+## Toward online RL — distill the judge into a reward model (2026-07-26)
+
+Neither literal option is clean: agentic-trajectory DPO has no offline form
+(divergent tool-use trajectories can't share a DPO prompt; tool-result tokens
+contaminate the loss), and Opus-judge-in-the-loop GRPO is prohibitively expensive
+(thousands of Opus calls per training run). The standard fix is
+**judge → preference data → reward model → RL**: distill the pairwise judge into a
+cheap local scorer that replaces Opus in the loop.
+
+`modal/reward_model.py`: Bradley-Terry LoRA reward head on **Qwen2.5-3B**, trained
+on the 1,261 pairwise pairs; the 710 head-to-head judgments (cross-model, unseen
+papers) are the independent eval.
+
+- **In-distribution val accuracy: 86%** (held-out same-distribution pairs).
+- **Held-out head-to-head agreement with Opus: 85.3%** — and *no degradation* on
+  the harder cross-model/unseen-paper setting:
+
+  | RM vs Opus | agreement |
+  |---|---|
+  | pw vs base | 87.6% |
+  | pw vs K16 | 83.5% |
+  | K16 vs base | 84.8% |
+  | **overall** | **85.3%** |
+
+So the expensive Opus pairwise judge is now a **cheap 3B reward model that
+reproduces it 85% of the time** on unseen cross-model comparisons. That is the
+enabler: it makes online GRPO affordable (RM reward, no Opus per step) *and*
+enables cheap RM-scored pairing at scale. `dpo/qwen3-rm` (+scores).
+
+**Remaining for literal online GRPO** (a further infra build, not yet run):
+trl GRPOTrainer needs trl≥0.16 + transformers≥4.48 + vLLM rollouts, and loading
+the 14B policy + 3B RM reward together → multi-A100. With the RM in hand this is
+now *feasible*; it's a heavier env than the DPO pipeline. Cheaper alternative that
+captures most of the value: RM-score a large candidate-pair set (no Opus cost) →
+bigger clean pairwise-signal DPO → retrain.
+
 ## Caveats / next
 
 - 283 pairs, single-turn (not agentic), 14B, one seed. Reward is a soft proxy.
