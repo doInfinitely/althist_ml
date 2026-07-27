@@ -49,7 +49,7 @@ hf_cache = modal.Volume.from_name("althist-hf-cache", create_if_missing=True)
               timeout=60 * 60 * 3, retries=0)
 def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
           rm_tag: str = "qwen3-rm", out_tag: str = "qwen14b-grpo",
-          steps: int = 150, num_gen: int = 6, lr: float = 1e-6, beta: float = 0.04):
+          steps: int = 60, num_gen: int = 4, lr: float = 1e-6, beta: float = 0.04):
     import json
     import os
     import socket
@@ -62,10 +62,13 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
     # GPUs (fine here). Mask GPUs before torch initialises CUDA.
     serve_dev = str(NDEV - 1)
     train_devs = ",".join(str(i) for i in range(NDEV - 1)) or "0"
-    serve_env = {**os.environ, "CUDA_VISIBLE_DEVICES": serve_dev, "VLLM_USE_V1": "0"}
+    # trl 0.18 vllm-serve is V1-native (no VLLM_USE_V1=0 — that V0 carry-over from
+    # trl 0.16 caused a first-gen stall). --enforce-eager skips CUDA-graph capture,
+    # the likely 0-tok/s hang on the first generate.
+    serve_env = {**os.environ, "CUDA_VISIBLE_DEVICES": serve_dev}
     vllm_proc = subprocess.Popen(
         ["trl", "vllm-serve", "--model", POLICY,
-         "--gpu-memory-utilization", "0.9"], env=serve_env)
+         "--gpu-memory-utilization", "0.9", "--enforce-eager", "true"], env=serve_env)
     for _ in range(120):
         try:
             with socket.create_connection(("0.0.0.0", 8000), timeout=2):
@@ -86,9 +89,10 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
                               AutoTokenizer)
     from trl import GRPOConfig, GRPOTrainer
 
-    # RM on CPU to keep GPU 0 entirely for the 14B trainer.
+    # RM on GPU 0 alongside the 14B trainer (vLLM is on the dedicated GPU 1, so
+    # GPU 0 has room: 14B trainer + 3B RM ~60GB < 80GB). CPU was too slow.
     rm_dir = f"/root/.cache/huggingface/dpo/{rm_tag}"
-    rm_dev = "cpu"
+    rm_dev = "cuda:0"
     rm_tok = AutoTokenizer.from_pretrained(rm_dir)
     rm_base = AutoModelForSequenceClassification.from_pretrained(
         RM_BASE, num_labels=1, torch_dtype=torch.bfloat16)
@@ -123,11 +127,14 @@ def train(prompts_path: str = "/root/.cache/huggingface/dpo/grpo_prompts.jsonl",
         output_dir=f"/root/.cache/huggingface/dpo/{out_tag}",
         max_steps=steps, num_generations=num_gen,
         per_device_train_batch_size=num_gen, gradient_accumulation_steps=2,
-        max_prompt_length=1024, max_completion_length=384,
+        max_prompt_length=1024, max_completion_length=320,
         learning_rate=lr, beta=beta, temperature=0.9,
         use_vllm=True, vllm_mode="server",   # connects to the vllm-serve above
-        gradient_checkpointing=True, bf16=True, logging_steps=1,
-        save_strategy="no", report_to=[], log_completions=False,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},  # DDP-compatible
+        bf16=True, logging_steps=1,
+        save_strategy="steps", save_steps=20,  # intermediate saves survive a timeout
+        report_to=[], log_completions=False,
     )
     trainer = GRPOTrainer(
         model=POLICY, reward_funcs=rm_reward, args=cfg, train_dataset=ds,
